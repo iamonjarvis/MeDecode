@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pdf2image
+pytesseract
+spacy
+transformers
+torch
+PyMuPDF
