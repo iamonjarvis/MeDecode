@@ -16,16 +16,15 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],  
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["*"],  
     allow_headers=["*"],
 )
 
 # Load SciSpaCy NLP model with large medical model
 nlp = spacy.load("en_core_sci_lg")
 
-# Specialist mapping based on detected symptoms
 SPECIALIST_MAPPING = {
     "chest pain": "Cardiologist",
     "heart attack": "Cardiologist",
@@ -42,7 +41,6 @@ SPECIALIST_MAPPING = {
     "arthritis": "Rheumatologist"
 }
 
-# Medical test normal ranges and explanations
 MEDICAL_TESTS = {
     "hemoglobin": {
         "normal_range": "13.8-17.2 g/dL (male), 12.1-15.1 g/dL (female)",
@@ -63,10 +61,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 def extract_text_from_pdf(pdf_path):
-    """
-    Extract text from a PDF by converting each page to an image and using Tesseract OCR.
-    """
-    images = convert_from_path(pdf_path, dpi=300)  # Higher DPI for better OCR accuracy
+    images = convert_from_path(pdf_path, dpi=300)
     text = ""
     for img in images:
         extracted_text = pytesseract.image_to_string(img, lang="eng")
@@ -75,58 +70,52 @@ def extract_text_from_pdf(pdf_path):
 
 
 def extract_text_from_image(image_path: str) -> str:
-    """Extract text from an image using Tesseract OCR."""
     return pytesseract.image_to_string(image_path)
 
 
 def summarize_extracted_text(text: str) -> str:
     """
     Summarize the extracted text using a transformer model.
-    Splits the text into smaller chunks based on token count and summarizes each.
+    To reduce memory usage, we truncate the input to a manageable length.
     """
+    # Truncate text to first 1000 words if it's too long
+    words = text.split()
+    if len(words) > 1000:
+        text = " ".join(words[:1000])
+        
     inputs = tokenizer(text, return_tensors="pt", truncation=False)
     total_tokens = inputs.input_ids.size(1)
-    max_tokens = 500  # Maximum tokens per chunk
+    max_tokens = 500
 
     if total_tokens <= max_tokens:
         try:
             summary = summarizer(text, max_length=200, min_length=50, do_sample=False)
             return summary[0]['summary_text']
         except Exception:
-            return text  # Fallback to original text if summarization fails
-
-    words = text.split()
-    chunk_size = max_tokens  # Rough approximation: 1 token ~ 1 word
-    chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
-    
-    summaries = []
-    for chunk in chunks:
-        try:
-            summ = summarizer(chunk, max_length=200, min_length=50, do_sample=False)
-            summaries.append(summ[0]['summary_text'])
-        except Exception:
-            summaries.append(chunk)
-    
-    combined_summary = " ".join(summaries)
-    combined_tokens = tokenizer(combined_summary, return_tensors="pt", truncation=False).input_ids.size(1)
-    if combined_tokens > max_tokens:
-        try:
-            final_summary = summarizer(combined_summary, max_length=200, min_length=50, do_sample=False)
-            return final_summary[0]['summary_text']
-        except Exception:
-            return combined_summary
+            return text
     else:
-        return combined_summary
+        chunk_size = max_tokens
+        chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+        summaries = []
+        for chunk in chunks:
+            try:
+                summ = summarizer(chunk, max_length=200, min_length=50, do_sample=False)
+                summaries.append(summ[0]['summary_text'])
+            except Exception:
+                summaries.append(chunk)
+        combined_summary = " ".join(summaries)
+        combined_tokens = tokenizer(combined_summary, return_tensors="pt", truncation=False).input_ids.size(1)
+        if combined_tokens > max_tokens:
+            try:
+                final_summary = summarizer(combined_summary, max_length=200, min_length=50, do_sample=False)
+                return final_summary[0]['summary_text']
+            except Exception:
+                return combined_summary
+        else:
+            return combined_summary
 
 
 def detect_medical_terms(text: str):
-    """
-    Detect medical symptoms and test results.
-    Returns:
-      detected_symptoms: dict mapping symptom to specialist,
-      recommended_specialists: list,
-      test_results: dict of test name to extracted value and details.
-    """
     doc = nlp(text)
     detected_terms = {ent.text.lower(): ent.label_ for ent in doc.ents}
     detected_symptoms = {term: SPECIALIST_MAPPING[term] for term in detected_terms if term in SPECIALIST_MAPPING}
@@ -147,10 +136,6 @@ def detect_medical_terms(text: str):
 
 
 def generate_recommendations(detected_symptoms, test_results):
-    """
-    Generate health recommendations based on detected symptoms and test results.
-    Returns a dictionary with recommendations for precautions, diet, medications, and general advice.
-    """
     recommendations = {
         "precautions": [],
         "diet": [],
@@ -199,14 +184,9 @@ def generate_recommendations(detected_symptoms, test_results):
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
-    """
-    Handle file upload, extract text using OCR, generate a summary,
-    detect medical terms and test results, and generate health recommendations.
-    """
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(await file.read())
-    
     extracted_text = (
         extract_text_from_pdf(file_path)
         if file.filename.endswith(".pdf")
