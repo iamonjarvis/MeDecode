@@ -16,10 +16,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (frontend domains)
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Load SciSpaCy NLP model with large medical model
@@ -95,7 +95,6 @@ def summarize_extracted_text(text: str) -> str:
         except Exception:
             return text  # Fallback to original text if summarization fails
 
-    # Otherwise, split text into chunks based on words (approximate token count)
     words = text.split()
     chunk_size = max_tokens  # Rough approximation: 1 token ~ 1 word
     chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
@@ -106,8 +105,8 @@ def summarize_extracted_text(text: str) -> str:
             summ = summarizer(chunk, max_length=200, min_length=50, do_sample=False)
             summaries.append(summ[0]['summary_text'])
         except Exception:
-            summaries.append(chunk)  # Fallback to chunk if error occurs
-
+            summaries.append(chunk)
+    
     combined_summary = " ".join(summaries)
     combined_tokens = tokenizer(combined_summary, return_tensors="pt", truncation=False).input_ids.size(1)
     if combined_tokens > max_tokens:
@@ -159,7 +158,6 @@ def generate_recommendations(detected_symptoms, test_results):
         "general_advice": []
     }
 
-    # Recommendations based on detected symptoms
     for symptom in detected_symptoms.keys():
         if symptom == "diabetes":
             recommendations["precautions"].append("Monitor blood sugar levels regularly.")
@@ -181,7 +179,6 @@ def generate_recommendations(detected_symptoms, test_results):
             recommendations["precautions"].append("Avoid smoking and exposure to pollutants.")
             recommendations["general_advice"].append("Consult a pulmonologist if symptoms persist.")
 
-    # Recommendations based on test results
     for test, details in test_results.items():
         try:
             value = float(details["value"])
@@ -209,6 +206,7 @@ async def upload_file(file: UploadFile = File(...)):
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as f:
         f.write(await file.read())
+    
     extracted_text = (
         extract_text_from_pdf(file_path)
         if file.filename.endswith(".pdf")
@@ -232,4 +230,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
