@@ -5,13 +5,12 @@ import fitz  # PyMuPDF
 import spacy
 import os
 from fastapi.middleware.cors import CORSMiddleware
-import json
 import re
 from transformers import pipeline, AutoTokenizer
 
-# Initialize summarizer pipeline and its tokenizer
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
-tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-cnn")
+# Initialize summarizer pipeline with a lighter model for memory efficiency
+summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+tokenizer = AutoTokenizer.from_pretrained("sshleifer/distilbart-cnn-12-6")
 
 app = FastAPI()
 
@@ -69,11 +68,9 @@ def extract_text_from_pdf(pdf_path):
     """
     images = convert_from_path(pdf_path, dpi=300)  # Higher DPI for better OCR accuracy
     text = ""
-
     for img in images:
         extracted_text = pytesseract.image_to_string(img, lang="eng")
         text += extracted_text + "\n"
-
     return text.strip()
 
 
@@ -87,7 +84,6 @@ def summarize_extracted_text(text: str) -> str:
     Summarize the extracted text using a transformer model.
     Splits the text into smaller chunks based on token count and summarizes each.
     """
-    # Convert text to tokens using the tokenizer
     inputs = tokenizer(text, return_tensors="pt", truncation=False)
     total_tokens = inputs.input_ids.size(1)
     max_tokens = 500  # Maximum tokens per chunk
@@ -96,33 +92,29 @@ def summarize_extracted_text(text: str) -> str:
         try:
             summary = summarizer(text, max_length=200, min_length=50, do_sample=False)
             return summary[0]['summary_text']
-        except Exception as e:
+        except Exception:
             return text  # Fallback to original text if summarization fails
 
     # Otherwise, split text into chunks based on words (approximate token count)
     words = text.split()
     chunk_size = max_tokens  # Rough approximation: 1 token ~ 1 word
-    chunks = []
-    for i in range(0, len(words), chunk_size):
-        chunk = " ".join(words[i:i + chunk_size])
-        chunks.append(chunk)
-
+    chunks = [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
+    
     summaries = []
     for chunk in chunks:
         try:
             summ = summarizer(chunk, max_length=200, min_length=50, do_sample=False)
             summaries.append(summ[0]['summary_text'])
-        except Exception as e:
+        except Exception:
             summaries.append(chunk)  # Fallback to chunk if error occurs
 
     combined_summary = " ".join(summaries)
-    # If combined summary is still long, summarize again (optional)
     combined_tokens = tokenizer(combined_summary, return_tensors="pt", truncation=False).input_ids.size(1)
     if combined_tokens > max_tokens:
         try:
             final_summary = summarizer(combined_summary, max_length=200, min_length=50, do_sample=False)
             return final_summary[0]['summary_text']
-        except Exception as e:
+        except Exception:
             return combined_summary
     else:
         return combined_summary
@@ -198,40 +190,32 @@ def generate_recommendations(detected_symptoms, test_results):
 
         if test == "cholesterol" and value >= 200:
             recommendations["diet"].append("Reduce intake of saturated fats and increase dietary fiber.")
-            recommendations["general_advice"].append(
-                "Consult a nutritionist and cardiologist for cholesterol management.")
+            recommendations["general_advice"].append("Consult a nutritionist and cardiologist for cholesterol management.")
         if test == "blood glucose" and value >= 100:
             recommendations["diet"].append("Reduce simple carbohydrates and sugars.")
             recommendations["general_advice"].append("Monitor blood glucose levels and consult an endocrinologist.")
 
-    # Remove duplicates
     for key in recommendations:
         recommendations[key] = list(set(recommendations[key]))
-
     return recommendations
 
 
 @app.post("/upload/")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Handle file upload, extract text, generate a summary of the report,
-    detect symptoms and test results, and generate health recommendations.
+    Handle file upload, extract text using OCR, generate a summary,
+    detect medical terms and test results, and generate health recommendations.
     """
     file_path = os.path.join(UPLOAD_DIR, file.filename)
-    # Save uploaded file
     with open(file_path, "wb") as f:
         f.write(await file.read())
-    # Extract text based on file type
     extracted_text = (
         extract_text_from_pdf(file_path)
         if file.filename.endswith(".pdf")
         else extract_text_from_image(file_path)
     )
-    # Summarize the extracted text to remove extraneous content
     summarized_text = summarize_extracted_text(extracted_text)
-    # Detect medical terms and test results from the summarized text
     detected_symptoms, recommended_specialists, test_results = detect_medical_terms(summarized_text)
-    # Generate health recommendations based on findings
     recommendations = generate_recommendations(detected_symptoms, test_results)
 
     return {
@@ -246,5 +230,4 @@ async def upload_file(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
