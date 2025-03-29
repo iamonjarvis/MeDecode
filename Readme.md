@@ -40,3 +40,7 @@ Run the app using:
 uvicorn main:app --reload
 ```
 Visit http://127.0.0.1:8000/docs to see the interactive API documentation.
+
+Preview 
+![image](https://github.com/user-attachments/assets/9474a3fd-0401-4052-b2f3-7ab731467ec5)
+
